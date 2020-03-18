@@ -1,0 +1,50 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: danscafetestacr.azurecr.io
+        username: ${{ secrets.acr_danscafetestacr_username }}
+        password: ${{ secrets.acr_danscafetestacr_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/" -f  "Dockerfile" -t danscafetestacr.azurecr.io/danscafedev:${{ github.sha }}
+        docker push danscafetestacr.azurecr.io/danscafedev:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_danscafedev_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep danscafedev3744 | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace danscafedev3744`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: danscafedev3744
+        container-registry-url: danscafetestacr.azurecr.io
+        container-registry-username: ${{ secrets.acr_danscafetestacr_username }}
+        container-registry-password: ${{ secrets.acr_danscafetestacr_password }}
+        secret-name: danscafedevdockerauth
+       
+    - uses: azure/k8s-deploy@v1
+      with:
+        namespace: danscafedev3744
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+        images: |
+          danscafetestacr.azurecr.io/danscafedev:${{ github.sha }}
+        imagepullsecrets: |
+          danscafedevdockerauth
